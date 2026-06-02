@@ -10,6 +10,9 @@ import {
   persistence,
   regions
 } from "./_shared-state.js";
+import { hydrateMarketplace } from "./marketplace-service.js";
+import { hydrateStorefronts } from "./storefront-service.js";
+import { hydrateAchievements } from "./achievement-service.js";
 
 // ── Shared types & helpers (re-exported from _shared-state) ─────────────────
 export type {
@@ -176,6 +179,10 @@ export async function initializeWorldStore() {
     }
   }
 
+  // Hydrate durable in-memory service caches from the now-canonical persistence.
+  await hydrateMarketplace();
+  await hydrateStorefronts();
+  await hydrateAchievements();
 }
 
 export function listRegions() {

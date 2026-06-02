@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { persistence } from "./_shared-state.js";
+import type { MarketListingRecord, TradeOfferRecord } from "../data/persistence.js";
 
 export type MarketListing = {
   id: string;
@@ -41,7 +43,88 @@ type PriceHistoryEntry = {
 const listings = new Map<string, MarketListing>();
 const trades = new Map<string, TradeOffer>();
 const priceHistory: PriceHistoryEntry[] = [];
+// Live escrow accounting only — recomputed from active auction bids, intentionally
+// kept in-memory (not durable domain data).
 const heldCurrency = new Map<string, number>();
+
+// ── Persistence mapping (write-through cache) ───────────────────────────────
+
+function toListingRecord(l: MarketListing): MarketListingRecord {
+  return {
+    id: l.id,
+    sellerAccountId: l.sellerAccountId,
+    sellerDisplayName: l.sellerDisplayName,
+    itemId: l.itemId,
+    itemName: l.itemName,
+    itemKind: l.itemKind,
+    price: l.price,
+    listingType: l.listingType,
+    currentBid: l.currentBid ?? null,
+    currentBidder: l.currentBidder ?? null,
+    currentBidderName: l.currentBidderName ?? null,
+    minBid: l.minBid ?? null,
+    auctionEndTime: l.auctionEndTime ?? null,
+    createdAt: l.createdAt,
+    status: l.status,
+  };
+}
+
+function fromListingRecord(r: MarketListingRecord): MarketListing {
+  const l: MarketListing = {
+    id: r.id,
+    sellerAccountId: r.sellerAccountId,
+    sellerDisplayName: r.sellerDisplayName,
+    itemId: r.itemId,
+    itemName: r.itemName,
+    itemKind: r.itemKind,
+    price: r.price,
+    listingType: r.listingType,
+    createdAt: r.createdAt,
+    status: r.status,
+  };
+  if (r.currentBid !== null) l.currentBid = r.currentBid;
+  if (r.currentBidder !== null) l.currentBidder = r.currentBidder;
+  if (r.currentBidderName !== null) l.currentBidderName = r.currentBidderName;
+  if (r.minBid !== null) l.minBid = r.minBid;
+  if (r.auctionEndTime !== null) l.auctionEndTime = r.auctionEndTime;
+  return l;
+}
+
+function toTradeRecord(t: TradeOffer): TradeOfferRecord {
+  return { ...t };
+}
+
+function fromTradeRecord(r: TradeOfferRecord): TradeOffer {
+  return { ...r };
+}
+
+function persistListing(l: MarketListing): void {
+  void persistence.saveMarketListing(toListingRecord(l));
+}
+
+function persistTrade(t: TradeOffer): void {
+  void persistence.saveTradeOffer(toTradeRecord(t));
+}
+
+// Hydrate caches from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so durable data survives restarts.
+export async function hydrateMarketplace(): Promise<void> {
+  for (const record of await persistence.listAllMarketListings()) {
+    listings.set(record.id, fromListingRecord(record));
+  }
+  for (const record of await persistence.listAllTradeOffers()) {
+    trades.set(record.id, fromTradeRecord(record));
+  }
+  for (const entry of await persistence.listAllPriceHistory()) {
+    priceHistory.push({ itemName: entry.itemName, price: entry.price, soldAt: entry.soldAt });
+  }
+  // Rebuild held-currency escrow from active auction bids.
+  for (const listing of listings.values()) {
+    if (listing.status === "active" && listing.currentBidder && listing.currentBid && listing.currentBid > 0) {
+      holdCurrency(listing.currentBidder, listing.currentBid);
+    }
+  }
+}
 
 function holdCurrency(accountId: string, amount: number): void {
   const current = heldCurrency.get(accountId) ?? 0;
@@ -116,6 +199,7 @@ export async function createListing(
   }
 
   listings.set(listing.id, listing);
+  persistListing(listing);
   return listing;
 }
 
@@ -135,6 +219,7 @@ export async function listMarketplace(filters?: {
       if (listing.currentBidder && listing.currentBid && listing.currentBid > 0) {
         releaseHeldCurrency(listing.currentBidder, listing.currentBid);
       }
+      persistListing(listing);
     }
   }
 
@@ -185,12 +270,15 @@ export async function buyListing(token: string, listingId: string): Promise<{ ok
   if (result === undefined) return { ok: false, reason: "currency transfer failed" };
 
   listing.status = "sold";
+  persistListing(listing);
 
+  const soldAt = new Date().toISOString();
   priceHistory.push({
     itemName: listing.itemName,
     price: listing.price,
-    soldAt: new Date().toISOString(),
+    soldAt,
   });
+  void persistence.appendPriceHistory({ itemName: listing.itemName, price: listing.price, soldAt });
 
   return { ok: true };
 }
@@ -207,6 +295,7 @@ export async function placeBid(token: string, listingId: string, amount: number)
 
   if (listing.auctionEndTime && new Date(listing.auctionEndTime) < new Date()) {
     listing.status = "expired";
+    persistListing(listing);
     return { ok: false, reason: "auction has ended" };
   }
 
@@ -227,6 +316,7 @@ export async function placeBid(token: string, listingId: string, amount: number)
   listing.currentBid = amount;
   listing.currentBidder = session.accountId;
   listing.currentBidderName = session.displayName;
+  persistListing(listing);
 
   return { ok: true };
 }
@@ -245,6 +335,7 @@ export async function cancelListing(token: string, listingId: string): Promise<{
   }
 
   listing.status = "cancelled";
+  persistListing(listing);
   return { ok: true };
 }
 
@@ -298,6 +389,7 @@ export async function createTradeOffer(
   };
 
   trades.set(trade.id, trade);
+  persistTrade(trade);
   return trade;
 }
 
@@ -323,6 +415,7 @@ export async function acceptTrade(token: string, tradeId: string): Promise<{ ok:
 
   trade.status = "accepted";
   trade.toDisplayName = session.displayName;
+  persistTrade(trade);
   return { ok: true };
 }
 
@@ -338,6 +431,7 @@ export async function declineTrade(token: string, tradeId: string): Promise<{ ok
   if (trade.status !== "pending") return { ok: false, reason: "trade is no longer pending" };
 
   trade.status = trade.fromAccountId === session.accountId ? "cancelled" : "declined";
+  persistTrade(trade);
   return { ok: true };
 }
 

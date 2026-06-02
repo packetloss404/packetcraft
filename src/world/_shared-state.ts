@@ -19,7 +19,14 @@ import {
   type RegionNoticeRecord,
   type RegionObjectPermissionRecord,
   type ObjectScriptRecord,
-  type AssetRecord
+  type AssetRecord,
+  type MarketListingRecord,
+  type TradeOfferRecord,
+  type PriceHistoryRecord,
+  type StorefrontRecord,
+  type StorefrontRatingRecord,
+  type CommissionRecord,
+  type PlayerProgressRecord
 } from "../data/persistence.js";
 import type { ChatHistoryEntry, ObjectGroupContract } from "../contracts.js";
 
@@ -43,6 +50,13 @@ export type RegionNotice = RegionNoticeRecord;
 export type ObjectPermissions = RegionObjectPermissionRecord;
 export type ObjectScript = ObjectScriptRecord;
 export type Asset = AssetRecord;
+export type MarketListingPersisted = MarketListingRecord;
+export type TradeOfferPersisted = TradeOfferRecord;
+export type PriceHistoryPersisted = PriceHistoryRecord;
+export type StorefrontPersisted = StorefrontRecord;
+export type StorefrontRatingPersisted = StorefrontRatingRecord;
+export type CommissionPersisted = CommissionRecord;
+export type PlayerProgressPersisted = PlayerProgressRecord;
 
 export type BuildPermission = {
   allowed: boolean;

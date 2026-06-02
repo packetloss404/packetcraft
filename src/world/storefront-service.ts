@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { getSession } from "./store.js";
+import { persistence } from "./_shared-state.js";
 
 export type Storefront = {
   id: string;
@@ -45,9 +46,40 @@ type TrendingSale = {
 const storefronts = new Map<string, Storefront>();
 const commissions = new Map<string, Commission>();
 const ratings = new Map<string, StorefrontRating[]>();
+// Ephemeral 24h rolling window used only for trending computation — not durable.
 const trendingSales: TrendingSale[] = [];
 
 const TRENDING_WINDOW_MS = 24 * 60 * 60 * 1000;
+
+// ── Persistence (write-through cache) ───────────────────────────────────────
+
+function persistStorefront(sf: Storefront): void {
+  void persistence.saveStorefront({ ...sf });
+}
+
+function persistCommission(c: Commission): void {
+  void persistence.saveCommission({ ...c, completedAt: c.completedAt ?? null });
+}
+
+function persistRating(r: StorefrontRating): void {
+  void persistence.saveStorefrontRating({ ...r });
+}
+
+// Hydrate caches from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so durable data survives restarts.
+export async function hydrateStorefronts(): Promise<void> {
+  for (const record of await persistence.listAllStorefronts()) {
+    storefronts.set(record.id, { ...record });
+  }
+  for (const record of await persistence.listAllCommissions()) {
+    commissions.set(record.id, { ...record, completedAt: record.completedAt ?? undefined });
+  }
+  for (const record of await persistence.listAllStorefrontRatings()) {
+    const list = ratings.get(record.storefrontAccountId) ?? [];
+    list.push({ accountId: record.accountId, storefrontAccountId: record.storefrontAccountId, rating: record.rating });
+    ratings.set(record.storefrontAccountId, list);
+  }
+}
 
 export function createStorefront(
   token: string,
@@ -78,6 +110,7 @@ export function createStorefront(
   };
 
   storefronts.set(storefront.id, storefront);
+  persistStorefront(storefront);
   return storefront;
 }
 
@@ -100,6 +133,7 @@ export function updateStorefront(
       if (updates.shopName !== undefined) sf.shopName = updates.shopName.slice(0, 64);
       if (updates.description !== undefined) sf.description = updates.description.slice(0, 500);
       if (updates.bannerColor !== undefined) sf.bannerColor = updates.bannerColor.slice(0, 7);
+      persistStorefront(sf);
       return sf;
     }
   }
@@ -132,6 +166,7 @@ export function recordSale(
     if (sf.accountId === accountId) {
       sf.totalSales += 1;
       sf.totalRevenue += amount;
+      persistStorefront(sf);
       break;
     }
   }
@@ -164,15 +199,19 @@ export function rateStorefront(
   }
 
   const existing = storefrontRatings.find((r) => r.accountId === session.accountId);
+  let ratingEntry: StorefrontRating;
   if (existing) {
     existing.rating = clamped;
+    ratingEntry = existing;
   } else {
-    storefrontRatings.push({
+    ratingEntry = {
       accountId: session.accountId,
       storefrontAccountId: accountId,
       rating: clamped,
-    });
+    };
+    storefrontRatings.push(ratingEntry);
   }
+  persistRating(ratingEntry);
 
   // Recalculate average
   const avg =
@@ -181,6 +220,7 @@ export function rateStorefront(
   for (const sf of storefronts.values()) {
     if (sf.accountId === accountId) {
       sf.rating = Math.round(avg * 100) / 100;
+      persistStorefront(sf);
       return sf;
     }
   }
@@ -255,6 +295,7 @@ export function createCommission(
   };
 
   commissions.set(commission.id, commission);
+  persistCommission(commission);
   return commission;
 }
 
@@ -269,6 +310,7 @@ export function acceptCommission(token: string, commissionId: string): Commissio
 
   commission.status = "accepted";
   commission.builderDisplayName = session.displayName;
+  persistCommission(commission);
   return commission;
 }
 
@@ -295,6 +337,7 @@ export function updateCommissionStatus(
   if (!allowed || !allowed.includes(status)) return undefined;
 
   commission.status = status;
+  persistCommission(commission);
   return commission;
 }
 
@@ -311,6 +354,7 @@ export function completeCommission(token: string, commissionId: string): Commiss
 
   commission.status = "completed";
   commission.completedAt = new Date().toISOString();
+  persistCommission(commission);
 
   // Record sale for the builder's storefront
   recordSale(commission.builderAccountId, commission.budget, commissionId, `Commission: ${commission.description.slice(0, 50)}`);

@@ -167,6 +167,83 @@ export type AssetRecord = {
   updatedAt: string;
 };
 
+export type MarketListingRecord = {
+  id: string;
+  sellerAccountId: string;
+  sellerDisplayName: string;
+  itemId: string;
+  itemName: string;
+  itemKind: string;
+  price: number;
+  listingType: "fixed" | "auction";
+  currentBid: number | null;
+  currentBidder: string | null;
+  currentBidderName: string | null;
+  minBid: number | null;
+  auctionEndTime: string | null;
+  createdAt: string;
+  status: "active" | "sold" | "expired" | "cancelled";
+};
+
+export type TradeOfferRecord = {
+  id: string;
+  fromAccountId: string;
+  fromDisplayName: string;
+  toAccountId: string;
+  toDisplayName: string;
+  offeredItems: string[];
+  offeredCurrency: number;
+  requestedItems: string[];
+  requestedCurrency: number;
+  status: "pending" | "accepted" | "declined" | "cancelled";
+  createdAt: string;
+};
+
+export type PriceHistoryRecord = {
+  id: string;
+  itemName: string;
+  price: number;
+  soldAt: string;
+};
+
+export type StorefrontRecord = {
+  id: string;
+  accountId: string;
+  displayName: string;
+  shopName: string;
+  description: string;
+  bannerColor: string;
+  featured: boolean;
+  totalSales: number;
+  totalRevenue: number;
+  rating: number;
+  createdAt: string;
+};
+
+export type StorefrontRatingRecord = {
+  accountId: string;
+  storefrontAccountId: string;
+  rating: number;
+};
+
+export type CommissionRecord = {
+  id: string;
+  clientAccountId: string;
+  clientDisplayName: string;
+  builderAccountId: string;
+  builderDisplayName: string;
+  description: string;
+  budget: number;
+  status: "open" | "accepted" | "in_progress" | "delivered" | "completed" | "cancelled";
+  createdAt: string;
+  completedAt: string | null;
+};
+
+export type PlayerProgressRecord = {
+  accountId: string;
+  data: unknown;
+};
+
 export type AvatarAppearanceRecord = {
   accountId: string;
   bodyColor: string;
@@ -312,6 +389,23 @@ export type PersistenceLayer = {
   listAssets(accountId: string): Promise<AssetRecord[]>;
   createAsset(asset: Omit<AssetRecord, "id" | "createdAt" | "updatedAt">): Promise<AssetRecord>;
   deleteAsset(assetId: string, accountId: string): Promise<boolean>;
+  // Marketplace
+  listAllMarketListings(): Promise<MarketListingRecord[]>;
+  saveMarketListing(listing: MarketListingRecord): Promise<void>;
+  listAllTradeOffers(): Promise<TradeOfferRecord[]>;
+  saveTradeOffer(trade: TradeOfferRecord): Promise<void>;
+  listAllPriceHistory(): Promise<PriceHistoryRecord[]>;
+  appendPriceHistory(entry: Omit<PriceHistoryRecord, "id">): Promise<PriceHistoryRecord>;
+  // Storefronts
+  listAllStorefronts(): Promise<StorefrontRecord[]>;
+  saveStorefront(storefront: StorefrontRecord): Promise<void>;
+  listAllStorefrontRatings(): Promise<StorefrontRatingRecord[]>;
+  saveStorefrontRating(rating: StorefrontRatingRecord): Promise<void>;
+  listAllCommissions(): Promise<CommissionRecord[]>;
+  saveCommission(commission: CommissionRecord): Promise<void>;
+  // Achievements / player progress
+  listAllPlayerProgress(): Promise<PlayerProgressRecord[]>;
+  savePlayerProgress(progress: PlayerProgressRecord): Promise<void>;
 };
 
 const seededRegions: RegionRecord[] = [
@@ -668,6 +762,14 @@ function createMemoryPersistence(): PersistenceLayer {
   const objectPermissions = new Map<string, RegionObjectPermissionRecord>();
   const objectScripts = new Map<string, ObjectScriptRecord>();
   const assets = new Map<string, AssetRecord>();
+  const marketListings = new Map<string, MarketListingRecord>();
+  const tradeOffers = new Map<string, TradeOfferRecord>();
+  const priceHistory: PriceHistoryRecord[] = [];
+  const storefronts = new Map<string, StorefrontRecord>();
+  const storefrontRatings = new Map<string, StorefrontRatingRecord>();
+  const commissions = new Map<string, CommissionRecord>();
+  const playerProgress = new Map<string, PlayerProgressRecord>();
+  const ratingKey = (accountId: string, storefrontAccountId: string) => `${accountId}::${storefrontAccountId}`;
   return {
     mode: "memory",
     async listRegions() {
@@ -1221,6 +1323,50 @@ function createMemoryPersistence(): PersistenceLayer {
       if (!asset || asset.accountId !== accountId) return false;
       return assets.delete(assetId);
     },
+    async listAllMarketListings() {
+      return [...marketListings.values()];
+    },
+    async saveMarketListing(listing) {
+      marketListings.set(listing.id, { ...listing });
+    },
+    async listAllTradeOffers() {
+      return [...tradeOffers.values()];
+    },
+    async saveTradeOffer(trade) {
+      tradeOffers.set(trade.id, { ...trade });
+    },
+    async listAllPriceHistory() {
+      return priceHistory.map((entry) => ({ ...entry }));
+    },
+    async appendPriceHistory(entry) {
+      const record: PriceHistoryRecord = { id: randomUUID(), ...entry };
+      priceHistory.push(record);
+      return record;
+    },
+    async listAllStorefronts() {
+      return [...storefronts.values()];
+    },
+    async saveStorefront(storefront) {
+      storefronts.set(storefront.id, { ...storefront });
+    },
+    async listAllStorefrontRatings() {
+      return [...storefrontRatings.values()];
+    },
+    async saveStorefrontRating(rating) {
+      storefrontRatings.set(ratingKey(rating.accountId, rating.storefrontAccountId), { ...rating });
+    },
+    async listAllCommissions() {
+      return [...commissions.values()];
+    },
+    async saveCommission(commission) {
+      commissions.set(commission.id, { ...commission });
+    },
+    async listAllPlayerProgress() {
+      return [...playerProgress.values()].map((p) => ({ ...p }));
+    },
+    async savePlayerProgress(progress) {
+      playerProgress.set(progress.accountId, { ...progress });
+    },
   };
 }
 
@@ -1564,6 +1710,98 @@ async function createPostgresPersistence(databaseUrl: string): Promise<Persisten
       price INTEGER NOT NULL DEFAULT 0,
       created_at TIMESTAMPTZ NOT NULL,
       updated_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS market_listings (
+      id UUID PRIMARY KEY,
+      seller_account_id UUID NOT NULL,
+      seller_display_name TEXT NOT NULL,
+      item_id TEXT NOT NULL,
+      item_name TEXT NOT NULL,
+      item_kind TEXT NOT NULL,
+      price INTEGER NOT NULL,
+      listing_type TEXT NOT NULL,
+      current_bid INTEGER,
+      current_bidder UUID,
+      current_bidder_name TEXT,
+      min_bid INTEGER,
+      auction_end_time TIMESTAMPTZ,
+      created_at TIMESTAMPTZ NOT NULL,
+      status TEXT NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS trade_offers (
+      id UUID PRIMARY KEY,
+      from_account_id UUID NOT NULL,
+      from_display_name TEXT NOT NULL,
+      to_account_id UUID NOT NULL,
+      to_display_name TEXT NOT NULL DEFAULT '',
+      offered_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+      offered_currency INTEGER NOT NULL DEFAULT 0,
+      requested_items JSONB NOT NULL DEFAULT '[]'::jsonb,
+      requested_currency INTEGER NOT NULL DEFAULT 0,
+      status TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS price_history (
+      id UUID PRIMARY KEY,
+      item_name TEXT NOT NULL,
+      price INTEGER NOT NULL,
+      sold_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS storefronts (
+      id UUID PRIMARY KEY,
+      account_id UUID NOT NULL,
+      display_name TEXT NOT NULL,
+      shop_name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      banner_color TEXT NOT NULL,
+      featured BOOLEAN NOT NULL DEFAULT FALSE,
+      total_sales INTEGER NOT NULL DEFAULT 0,
+      total_revenue INTEGER NOT NULL DEFAULT 0,
+      rating DOUBLE PRECISION NOT NULL DEFAULT 0,
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS storefront_ratings (
+      account_id UUID NOT NULL,
+      storefront_account_id UUID NOT NULL,
+      rating INTEGER NOT NULL,
+      PRIMARY KEY (account_id, storefront_account_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS commissions (
+      id UUID PRIMARY KEY,
+      client_account_id UUID NOT NULL,
+      client_display_name TEXT NOT NULL,
+      builder_account_id UUID NOT NULL,
+      builder_display_name TEXT NOT NULL DEFAULT '',
+      description TEXT NOT NULL DEFAULT '',
+      budget INTEGER NOT NULL,
+      status TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      completed_at TIMESTAMPTZ
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS player_progress (
+      account_id UUID PRIMARY KEY,
+      data JSONB NOT NULL
     )
   `);
 
@@ -2540,6 +2778,180 @@ async function createPostgresPersistence(databaseUrl: string): Promise<Persisten
     async deleteAsset(assetId, accountId) {
       const result = await pool.query("DELETE FROM assets WHERE id = $1 AND account_id = $2", [assetId, accountId]);
       return (result.rowCount ?? 0) > 0;
+    },
+    async listAllMarketListings() {
+      const result = await pool.query("SELECT id, seller_account_id, seller_display_name, item_id, item_name, item_kind, price, listing_type, current_bid, current_bidder, current_bidder_name, min_bid, auction_end_time, created_at, status FROM market_listings");
+      return result.rows.map((row) => ({
+        id: row.id,
+        sellerAccountId: row.seller_account_id,
+        sellerDisplayName: row.seller_display_name,
+        itemId: row.item_id,
+        itemName: row.item_name,
+        itemKind: row.item_kind,
+        price: row.price,
+        listingType: row.listing_type,
+        currentBid: row.current_bid,
+        currentBidder: row.current_bidder,
+        currentBidderName: row.current_bidder_name,
+        minBid: row.min_bid,
+        auctionEndTime: row.auction_end_time ? new Date(row.auction_end_time).toISOString() : null,
+        createdAt: new Date(row.created_at).toISOString(),
+        status: row.status
+      }));
+    },
+    async saveMarketListing(listing) {
+      await pool.query(
+        `INSERT INTO market_listings (id, seller_account_id, seller_display_name, item_id, item_name, item_kind, price, listing_type, current_bid, current_bidder, current_bidder_name, min_bid, auction_end_time, created_at, status)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ON CONFLICT (id) DO UPDATE SET
+           current_bid = EXCLUDED.current_bid,
+           current_bidder = EXCLUDED.current_bidder,
+           current_bidder_name = EXCLUDED.current_bidder_name,
+           min_bid = EXCLUDED.min_bid,
+           auction_end_time = EXCLUDED.auction_end_time,
+           status = EXCLUDED.status`,
+        [
+          listing.id, listing.sellerAccountId, listing.sellerDisplayName, listing.itemId, listing.itemName,
+          listing.itemKind, listing.price, listing.listingType, listing.currentBid, listing.currentBidder,
+          listing.currentBidderName, listing.minBid, listing.auctionEndTime, listing.createdAt, listing.status
+        ]
+      );
+    },
+    async listAllTradeOffers() {
+      const result = await pool.query("SELECT id, from_account_id, from_display_name, to_account_id, to_display_name, offered_items, offered_currency, requested_items, requested_currency, status, created_at FROM trade_offers");
+      return result.rows.map((row) => ({
+        id: row.id,
+        fromAccountId: row.from_account_id,
+        fromDisplayName: row.from_display_name,
+        toAccountId: row.to_account_id,
+        toDisplayName: row.to_display_name,
+        offeredItems: row.offered_items,
+        offeredCurrency: row.offered_currency,
+        requestedItems: row.requested_items,
+        requestedCurrency: row.requested_currency,
+        status: row.status,
+        createdAt: new Date(row.created_at).toISOString()
+      }));
+    },
+    async saveTradeOffer(trade) {
+      await pool.query(
+        `INSERT INTO trade_offers (id, from_account_id, from_display_name, to_account_id, to_display_name, offered_items, offered_currency, requested_items, requested_currency, status, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT (id) DO UPDATE SET
+           to_display_name = EXCLUDED.to_display_name,
+           status = EXCLUDED.status`,
+        [
+          trade.id, trade.fromAccountId, trade.fromDisplayName, trade.toAccountId, trade.toDisplayName,
+          JSON.stringify(trade.offeredItems), trade.offeredCurrency, JSON.stringify(trade.requestedItems),
+          trade.requestedCurrency, trade.status, trade.createdAt
+        ]
+      );
+    },
+    async listAllPriceHistory() {
+      const result = await pool.query("SELECT id, item_name, price, sold_at FROM price_history");
+      return result.rows.map((row) => ({
+        id: row.id,
+        itemName: row.item_name,
+        price: row.price,
+        soldAt: new Date(row.sold_at).toISOString()
+      }));
+    },
+    async appendPriceHistory(entry) {
+      const id = randomUUID();
+      await pool.query("INSERT INTO price_history (id, item_name, price, sold_at) VALUES ($1,$2,$3,$4)", [id, entry.itemName, entry.price, entry.soldAt]);
+      return { id, ...entry };
+    },
+    async listAllStorefronts() {
+      const result = await pool.query("SELECT id, account_id, display_name, shop_name, description, banner_color, featured, total_sales, total_revenue, rating, created_at FROM storefronts");
+      return result.rows.map((row) => ({
+        id: row.id,
+        accountId: row.account_id,
+        displayName: row.display_name,
+        shopName: row.shop_name,
+        description: row.description,
+        bannerColor: row.banner_color,
+        featured: row.featured,
+        totalSales: row.total_sales,
+        totalRevenue: row.total_revenue,
+        rating: row.rating,
+        createdAt: new Date(row.created_at).toISOString()
+      }));
+    },
+    async saveStorefront(storefront) {
+      await pool.query(
+        `INSERT INTO storefronts (id, account_id, display_name, shop_name, description, banner_color, featured, total_sales, total_revenue, rating, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+         ON CONFLICT (id) DO UPDATE SET
+           shop_name = EXCLUDED.shop_name,
+           description = EXCLUDED.description,
+           banner_color = EXCLUDED.banner_color,
+           featured = EXCLUDED.featured,
+           total_sales = EXCLUDED.total_sales,
+           total_revenue = EXCLUDED.total_revenue,
+           rating = EXCLUDED.rating`,
+        [
+          storefront.id, storefront.accountId, storefront.displayName, storefront.shopName, storefront.description,
+          storefront.bannerColor, storefront.featured, storefront.totalSales, storefront.totalRevenue,
+          storefront.rating, storefront.createdAt
+        ]
+      );
+    },
+    async listAllStorefrontRatings() {
+      const result = await pool.query("SELECT account_id, storefront_account_id, rating FROM storefront_ratings");
+      return result.rows.map((row) => ({
+        accountId: row.account_id,
+        storefrontAccountId: row.storefront_account_id,
+        rating: row.rating
+      }));
+    },
+    async saveStorefrontRating(rating) {
+      await pool.query(
+        `INSERT INTO storefront_ratings (account_id, storefront_account_id, rating)
+         VALUES ($1,$2,$3)
+         ON CONFLICT (account_id, storefront_account_id) DO UPDATE SET rating = EXCLUDED.rating`,
+        [rating.accountId, rating.storefrontAccountId, rating.rating]
+      );
+    },
+    async listAllCommissions() {
+      const result = await pool.query("SELECT id, client_account_id, client_display_name, builder_account_id, builder_display_name, description, budget, status, created_at, completed_at FROM commissions");
+      return result.rows.map((row) => ({
+        id: row.id,
+        clientAccountId: row.client_account_id,
+        clientDisplayName: row.client_display_name,
+        builderAccountId: row.builder_account_id,
+        builderDisplayName: row.builder_display_name,
+        description: row.description,
+        budget: row.budget,
+        status: row.status,
+        createdAt: new Date(row.created_at).toISOString(),
+        completedAt: row.completed_at ? new Date(row.completed_at).toISOString() : null
+      }));
+    },
+    async saveCommission(commission) {
+      await pool.query(
+        `INSERT INTO commissions (id, client_account_id, client_display_name, builder_account_id, builder_display_name, description, budget, status, created_at, completed_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
+         ON CONFLICT (id) DO UPDATE SET
+           builder_display_name = EXCLUDED.builder_display_name,
+           status = EXCLUDED.status,
+           completed_at = EXCLUDED.completed_at`,
+        [
+          commission.id, commission.clientAccountId, commission.clientDisplayName, commission.builderAccountId,
+          commission.builderDisplayName, commission.description, commission.budget, commission.status,
+          commission.createdAt, commission.completedAt
+        ]
+      );
+    },
+    async listAllPlayerProgress() {
+      const result = await pool.query("SELECT account_id, data FROM player_progress");
+      return result.rows.map((row) => ({ accountId: row.account_id, data: row.data }));
+    },
+    async savePlayerProgress(progress) {
+      await pool.query(
+        `INSERT INTO player_progress (account_id, data) VALUES ($1,$2)
+         ON CONFLICT (account_id) DO UPDATE SET data = EXCLUDED.data`,
+        [progress.accountId, JSON.stringify(progress.data)]
+      );
     },
   };
 }

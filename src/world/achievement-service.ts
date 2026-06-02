@@ -1,4 +1,5 @@
 import { getSession, type Session } from "./store.js";
+import { persistence } from "./_shared-state.js";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
@@ -153,6 +154,22 @@ const WEEKLY_CHALLENGE_TEMPLATES = [
 
 const playerProgressMap = new Map<string, PlayerProgress>();
 
+// ── Persistence (write-through cache) ───────────────────────────────────────
+// The full PlayerProgress object is stored as a JSON blob so the nested stats,
+// unlocked achievements, and challenge state all survive restarts.
+
+function persistProgress(progress: PlayerProgress): void {
+  void persistence.savePlayerProgress({ accountId: progress.accountId, data: progress });
+}
+
+// Hydrate cache from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so durable data survives restarts.
+export async function hydrateAchievements(): Promise<void> {
+  for (const record of await persistence.listAllPlayerProgress()) {
+    playerProgressMap.set(record.accountId, record.data as PlayerProgress);
+  }
+}
+
 function getOrCreateProgress(accountId: string): PlayerProgress {
   let progress = playerProgressMap.get(accountId);
   if (!progress) {
@@ -177,6 +194,7 @@ function getOrCreateProgress(accountId: string): PlayerProgress {
       weeklyChallenges: [],
     };
     playerProgressMap.set(accountId, progress);
+    persistProgress(progress);
   }
   return progress;
 }
@@ -245,6 +263,7 @@ export function checkAndAwardAchievements(accountId: string): Achievement[] {
     }
   }
 
+  persistProgress(progress);
   return newlyAwarded;
 }
 
@@ -348,6 +367,7 @@ export function generateDailyChallenges(accountId: string): DailyChallenge[] {
     expiresAt: expiresAt.toISOString(),
   }));
 
+  persistProgress(progress);
   return progress.dailyChallenges;
 }
 
@@ -379,6 +399,7 @@ export function generateWeeklyChallenges(accountId: string): WeeklyChallenge[] {
     expiresAt: expiresAt.toISOString(),
   }));
 
+  persistProgress(progress);
   return progress.weeklyChallenges;
 }
 
@@ -434,6 +455,7 @@ export function setTitle(token: string, title: string): boolean {
 
   const progress = getOrCreateProgress(session.accountId);
   progress.title = title;
+  persistProgress(progress);
   return true;
 }
 
