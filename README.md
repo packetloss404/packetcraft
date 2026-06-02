@@ -1,6 +1,11 @@
 # PacketCraft
 
-A social MMORPG platform built on Minecraft. Uses a Paper server plugin for gameplay integration, a Fabric client mod for custom GUI, and a Fastify/TypeScript sidecar for social features, economy, marketplace, achievements, and events.
+A social gameplay layer for Minecraft (Java Edition). A Fastify/TypeScript sidecar holds all
+the business logic and data (the source of truth) for social features, economy, parcels,
+marketplace, achievements, and events. A Paper server plugin bridges Minecraft events to that
+sidecar, and a Fabric client mod provides the in-game GUI screens. There is no separate game
+client — players use the standard Minecraft Java client, and visuals are handled by Minecraft
+itself plus an optional Iris shader pack.
 
 ## Architecture
 
@@ -212,12 +217,34 @@ npx vitest run src/__tests__/auth.test.ts  # Single test file
 - **Vault** — Economy integration with other plugins
 - **WorldGuard** — Optional parcel-to-WG region sync
 
+## Visuals
+
+PacketCraft does not ship its own renderer. The world is rendered by the Minecraft Java client.
+For enhanced lighting, water, and atmosphere, run an [Iris](https://irisshaders.dev/) shader pack
+alongside the Fabric mod — this replaces the bespoke shader work that the retired Godot client
+used to provide.
+
+## Follow-ups / known gaps
+
+These are tracked in more detail in [dev/REVERT-FOLLOWUPS.md](dev/REVERT-FOLLOWUPS.md):
+
+- **Tier-2/3 UI coverage** — Several services (marketplace beyond basics, achievements, guilds,
+  pets, photos, voice) previously had GUI only in the retired Godot client. They need Fabric
+  screens and/or Paper commands to be reachable in-game again.
+- **`object_scripts`** — Stored as inert text; no interpreter exists on client or server. Decide
+  whether to implement a server-side runtime (Lua/DSL) or cut the feature.
+- **Persistence** — Marketplace, guilds, pets, photos, and voice are in-memory only. Add
+  PostgreSQL-backed persistence through the existing `src/data/persistence.ts` layer.
+- **Visuals** — Standardize on Minecraft + an Iris shader pack to approximate the look the Godot
+  shaders provided.
+
 ## Documentation
 
 - [Plugin Guide](docs/plugin.html) — Player-facing feature guide
 - [Deployment Guide](docs/deploy.html) — Server admin setup
 - [Game Manual](docs/manual/) — Complete game manual
 - [Developer Manual](docs/devmanual/) — Technical documentation
+- [Revert Follow-ups](dev/REVERT-FOLLOWUPS.md) — Open work after retiring the Godot client
 
 ## License
 

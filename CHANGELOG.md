@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file.
 
 ---
 
+## 2026-06-02 -- Retire Godot native client; revert to Paper + Fabric over the REST sidecar
+
+### Removed
+- Deleted the Godot native client at `native-client/godot/`
+- Removed the experimental "live world" path (voxel/world-sync over `/ws/regions/` and
+  `/api/regions/.../chunks`) that the Godot client targeted
+
+### Changed
+- Reaffirmed the client architecture as a Minecraft **Paper plugin** (server-side:
+  economy, parcels, protection, commands) plus a **Fabric mod** (client GUI screens),
+  both consuming the **Fastify + PostgreSQL REST sidecar** as the single source of truth
+- Rewrote `README.md` to drop Godot/voxel/MMORPG framing and describe what actually runs;
+  visuals are now Minecraft + an optional Iris shader pack
+
+### Rationale
+The Godot "live world" (voxel rendering and world-sync over `/ws/regions/` and
+`/api/regions/.../chunks`) was stubbed on both client and server and never functional.
+The backend, by contrast, is client-agnostic REST and was already fully consumed by the
+Paper plugin and Fabric mod. Retiring the Godot client removes a non-working, high-cost
+path and returns the project to its proven Minecraft-Java stack.
+
+### Follow-ups
+See `dev/REVERT-FOLLOWUPS.md` for tracked gaps (Tier-2/3 UI coverage, `object_scripts`
+runtime decision, persistence for in-memory services, and shader-pack visuals).
+
+---
+
 ## 2026-03-26 -- Reorganize dev/ directory and create next-gen sprint plan
 
 ### Changed

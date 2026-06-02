@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-PacketCraft is a social MMORPG platform built on Minecraft with three components:
+PacketCraft is a social gameplay layer for Minecraft with three components:
 - **TypeScript Sidecar** (`src/`) — Fastify HTTP server handling all business logic, persistence, and API
 - **Paper Plugin** (`paper-plugin/`) — Java plugin bridging Minecraft server to sidecar via HTTP
 - **Fabric Client Mod** (`fabric-mod/`) — Java client mod providing UI overlays, communicates directly with sidecar
