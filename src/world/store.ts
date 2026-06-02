@@ -17,6 +17,9 @@ import { hydratePets } from "./pet-service.js";
 import { hydratePhotos } from "./photo-service.js";
 import { hydrateHomes } from "./home-service.js";
 import { hydrateHomeRatings } from "./home-rating-service.js";
+import { hydrateChat } from "./chat-service.js";
+import { hydrateEvents } from "./event-service.js";
+import { hydrateMedia } from "./media-service.js";
 
 // ── Shared types & helpers (re-exported from _shared-state) ─────────────────
 export type {
@@ -191,6 +194,9 @@ export async function initializeWorldStore() {
   await hydratePhotos();
   await hydrateHomes();
   await hydrateHomeRatings();
+  await hydrateChat();
+  await hydrateEvents();
+  await hydrateMedia();
 }
 
 export function listRegions() {

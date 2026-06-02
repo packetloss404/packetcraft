@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getSession } from "./store.js";
+import { persistence } from "./_shared-state.js";
+import type { MediaItemRecord } from "../data/persistence.js";
 
 // --- Types ---
 
@@ -43,9 +45,48 @@ export type MediaObject = {
   createdAt: string;
 };
 
-// --- In-memory store ---
+// --- In-memory store (write-through cache, keyed by objectId) ---
 
 const mediaObjects = new Map<string, MediaObject>();
+
+// ── Persistence mapping (write-through cache) ───────────────────────────────
+
+function toMediaRecord(m: MediaObject): MediaItemRecord {
+  return {
+    id: m.id,
+    objectId: m.objectId,
+    mediaType: m.mediaType,
+    config: { ...m.config },
+    regionId: m.regionId,
+    ownerAccountId: m.ownerAccountId,
+    createdAt: m.createdAt,
+  };
+}
+
+function fromMediaRecord(r: MediaItemRecord): MediaObject {
+  return {
+    id: r.id,
+    objectId: r.objectId,
+    mediaType: r.mediaType as MediaType,
+    config: { ...r.config },
+    regionId: r.regionId,
+    ownerAccountId: r.ownerAccountId,
+    createdAt: r.createdAt,
+  };
+}
+
+function persistMedia(m: MediaObject): void {
+  void persistence.saveMediaItem(toMediaRecord(m));
+}
+
+// Hydrate cache from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so durable user media survives restarts.
+export async function hydrateMedia(): Promise<void> {
+  for (const record of await persistence.listAllMediaItems()) {
+    const media = fromMediaRecord(record);
+    mediaObjects.set(media.objectId, media);
+  }
+}
 
 // --- Validation ---
 
@@ -152,6 +193,7 @@ export async function createMediaObject(
   };
 
   mediaObjects.set(objectId, media);
+  persistMedia(media);
   return media;
 }
 
@@ -172,6 +214,7 @@ export async function updateMediaConfig(
 
   const updated: MediaObject = { ...media, config };
   mediaObjects.set(objectId, updated);
+  persistMedia(updated);
   return updated;
 }
 
@@ -187,6 +230,7 @@ export async function removeMediaObject(
   if (media.ownerAccountId !== session.accountId) return false;
 
   mediaObjects.delete(objectId);
+  void persistence.deleteMediaItem(objectId);
   return true;
 }
 

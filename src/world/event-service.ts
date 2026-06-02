@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getSession, type Session } from "./store.js";
+import { persistence } from "./_shared-state.js";
+import type { EventRecord } from "../data/persistence.js";
 
 export type GameEventType =
   | "build_competition"
@@ -30,9 +32,69 @@ export type GameEvent = {
 };
 
 const events = new Map<string, GameEvent>();
+// Live-only transition bookkeeping — recomputable from event start/end times
+// and recent attendance; intentionally kept in-memory (not durable).
 const endedEventAttendance = new Map<string, number>();
 const startedEventIds = new Set<string>();
 const endedEventIds = new Set<string>();
+
+// ── Persistence mapping (write-through cache) ───────────────────────────────
+
+function toEventRecord(e: GameEvent): EventRecord {
+  return {
+    id: e.id,
+    name: e.name,
+    description: e.description,
+    creatorAccountId: e.creatorAccountId,
+    creatorDisplayName: e.creatorDisplayName,
+    regionId: e.regionId,
+    parcelId: e.parcelId ?? null,
+    eventType: e.eventType,
+    startTime: e.startTime,
+    endTime: e.endTime,
+    recurring: e.recurring,
+    rsvps: [...e.rsvps],
+    maxAttendees: e.maxAttendees ?? null,
+    prizes: e.prizes ?? null,
+    createdAt: e.createdAt,
+  };
+}
+
+function fromEventRecord(r: EventRecord): GameEvent {
+  const e: GameEvent = {
+    id: r.id,
+    name: r.name,
+    description: r.description,
+    creatorAccountId: r.creatorAccountId,
+    creatorDisplayName: r.creatorDisplayName,
+    regionId: r.regionId,
+    eventType: r.eventType as GameEventType,
+    startTime: r.startTime,
+    endTime: r.endTime,
+    recurring: r.recurring,
+    rsvps: [...r.rsvps],
+    createdAt: r.createdAt,
+  };
+  if (r.parcelId !== null) e.parcelId = r.parcelId;
+  if (r.maxAttendees !== null) e.maxAttendees = r.maxAttendees;
+  if (r.prizes !== null) e.prizes = r.prizes;
+  return e;
+}
+
+function persistEvent(e: GameEvent): void {
+  void persistence.saveEvent(toEventRecord(e));
+}
+
+// Hydrate cache from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so scheduled/durable events survive
+// restarts. Live countdown/transition state is recomputed on demand by
+// checkEventTransitions().
+export async function hydrateEvents(): Promise<void> {
+  for (const record of await persistence.listAllEvents()) {
+    const event = fromEventRecord(record);
+    events.set(event.id, event);
+  }
+}
 
 export function createEvent(
   token: string,
@@ -71,6 +133,7 @@ export function createEvent(
   };
 
   events.set(event.id, event);
+  persistEvent(event);
   return event;
 }
 
@@ -112,6 +175,7 @@ export function rsvpEvent(token: string, eventId: string): GameEvent | undefined
   }
 
   events.set(eventId, event);
+  persistEvent(event);
   return event;
 }
 
@@ -127,6 +191,7 @@ export function cancelEvent(token: string, eventId: string): boolean {
   }
 
   events.delete(eventId);
+  void persistence.deleteEvent(eventId);
   return true;
 }
 

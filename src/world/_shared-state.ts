@@ -27,6 +27,9 @@ import {
   type StorefrontRatingRecord,
   type CommissionRecord,
   type PlayerProgressRecord,
+  type ChatHistoryRecord,
+  type EventRecord,
+  type MediaItemRecord,
   type PetRecord,
   type PhotoRecord,
   type HomeRecord,
@@ -63,6 +66,9 @@ export type StorefrontPersisted = StorefrontRecord;
 export type StorefrontRatingPersisted = StorefrontRatingRecord;
 export type CommissionPersisted = CommissionRecord;
 export type PlayerProgressPersisted = PlayerProgressRecord;
+export type ChatHistoryPersisted = ChatHistoryRecord;
+export type EventPersisted = EventRecord;
+export type MediaItemPersisted = MediaItemRecord;
 export type PetPersisted = PetRecord;
 export type PhotoPersisted = PhotoRecord;
 export type HomePersisted = HomeRecord;
@@ -257,6 +263,21 @@ export function pushChatHistory(regionId: string, entry: ChatHistoryEntry): void
   if (buffer.length > CHAT_HISTORY_MAX) {
     buffer.shift();
   }
+  // Write-through: mirror the rolling per-region history to durable storage.
+  // The persistence layer trims to CHAT_HISTORY_MAX rows per region so the
+  // table mirrors the in-memory cap rather than growing unbounded.
+  void persistence.appendChatHistory(
+    {
+      id: randomUUID(),
+      regionId,
+      avatarId: entry.avatarId,
+      displayName: entry.displayName,
+      message: entry.message,
+      channel: entry.channel,
+      createdAt: entry.createdAt
+    },
+    CHAT_HISTORY_MAX
+  );
 }
 
 export async function appendAuditLog(token: string, action: string, targetType: string, targetId: string, details: string, regionId: string | null) {

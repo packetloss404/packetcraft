@@ -244,6 +244,44 @@ export type PlayerProgressRecord = {
   data: unknown;
 };
 
+export type ChatHistoryRecord = {
+  id: string;
+  regionId: string;
+  avatarId: string;
+  displayName: string;
+  message: string;
+  channel: string;
+  createdAt: string;
+};
+
+export type EventRecord = {
+  id: string;
+  name: string;
+  description: string;
+  creatorAccountId: string;
+  creatorDisplayName: string;
+  regionId: string;
+  parcelId: string | null;
+  eventType: string;
+  startTime: string;
+  endTime: string;
+  recurring: null | "daily" | "weekly" | "monthly";
+  rsvps: string[];
+  maxAttendees: number | null;
+  prizes: string | null;
+  createdAt: string;
+};
+
+export type MediaItemRecord = {
+  id: string;
+  objectId: string;
+  mediaType: string;
+  config: Record<string, unknown>;
+  regionId: string;
+  ownerAccountId: string;
+  createdAt: string;
+};
+
 export type PetRecord = {
   id: string;
   ownerAccountId: string;
@@ -469,6 +507,17 @@ export type PersistenceLayer = {
   // Achievements / player progress
   listAllPlayerProgress(): Promise<PlayerProgressRecord[]>;
   savePlayerProgress(progress: PlayerProgressRecord): Promise<void>;
+  // Chat history (rolling, capped per region)
+  listAllChatHistory(): Promise<ChatHistoryRecord[]>;
+  appendChatHistory(entry: ChatHistoryRecord, maxPerRegion: number): Promise<void>;
+  // Events
+  listAllEvents(): Promise<EventRecord[]>;
+  saveEvent(event: EventRecord): Promise<void>;
+  deleteEvent(eventId: string): Promise<void>;
+  // Media items
+  listAllMediaItems(): Promise<MediaItemRecord[]>;
+  saveMediaItem(media: MediaItemRecord): Promise<void>;
+  deleteMediaItem(objectId: string): Promise<void>;
   // Pets
   listAllPets(): Promise<PetRecord[]>;
   savePet(pet: PetRecord): Promise<void>;
@@ -851,6 +900,9 @@ function createMemoryPersistence(): PersistenceLayer {
   const storefrontRatings = new Map<string, StorefrontRatingRecord>();
   const commissions = new Map<string, CommissionRecord>();
   const playerProgress = new Map<string, PlayerProgressRecord>();
+  const chatHistoryStore = new Map<string, ChatHistoryRecord[]>();
+  const eventsStore = new Map<string, EventRecord>();
+  const mediaItemsStore = new Map<string, MediaItemRecord>();
   const petsStore = new Map<string, PetRecord>();
   const photosStore = new Map<string, PhotoRecord>();
   const homesStore = new Map<string, HomeRecord>();
@@ -1457,6 +1509,42 @@ function createMemoryPersistence(): PersistenceLayer {
     async savePlayerProgress(progress) {
       playerProgress.set(progress.accountId, { ...progress });
     },
+    async listAllChatHistory() {
+      const all: ChatHistoryRecord[] = [];
+      for (const buffer of chatHistoryStore.values()) {
+        for (const entry of buffer) all.push({ ...entry });
+      }
+      return all;
+    },
+    async appendChatHistory(entry, maxPerRegion) {
+      let buffer = chatHistoryStore.get(entry.regionId);
+      if (!buffer) {
+        buffer = [];
+        chatHistoryStore.set(entry.regionId, buffer);
+      }
+      buffer.push({ ...entry });
+      while (buffer.length > maxPerRegion) {
+        buffer.shift();
+      }
+    },
+    async listAllEvents() {
+      return [...eventsStore.values()].map((e) => ({ ...e, rsvps: [...e.rsvps] }));
+    },
+    async saveEvent(event) {
+      eventsStore.set(event.id, { ...event, rsvps: [...event.rsvps] });
+    },
+    async deleteEvent(eventId) {
+      eventsStore.delete(eventId);
+    },
+    async listAllMediaItems() {
+      return [...mediaItemsStore.values()].map((m) => ({ ...m, config: { ...m.config } }));
+    },
+    async saveMediaItem(media) {
+      mediaItemsStore.set(media.objectId, { ...media, config: { ...media.config } });
+    },
+    async deleteMediaItem(objectId) {
+      mediaItemsStore.delete(objectId);
+    },
     async listAllPets() {
       return [...petsStore.values()].map((p) => ({ ...p, tricks: [...p.tricks] }));
     },
@@ -1970,6 +2058,52 @@ async function createPostgresPersistence(databaseUrl: string): Promise<Persisten
       adopted_at TIMESTAMPTZ NOT NULL,
       last_fed_at TIMESTAMPTZ NOT NULL,
       last_played_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS chat_history (
+      seq BIGSERIAL PRIMARY KEY,
+      id UUID NOT NULL,
+      region_id TEXT NOT NULL,
+      avatar_id TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      message TEXT NOT NULL,
+      channel TEXT NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS chat_history_region_seq_idx ON chat_history (region_id, seq)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS events (
+      id UUID PRIMARY KEY,
+      name TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      creator_account_id UUID NOT NULL,
+      creator_display_name TEXT NOT NULL,
+      region_id TEXT NOT NULL,
+      parcel_id TEXT,
+      event_type TEXT NOT NULL,
+      start_time TIMESTAMPTZ NOT NULL,
+      end_time TIMESTAMPTZ NOT NULL,
+      recurring TEXT,
+      rsvps JSONB NOT NULL DEFAULT '[]'::jsonb,
+      max_attendees INTEGER,
+      prizes TEXT,
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS media_items (
+      object_id TEXT PRIMARY KEY,
+      id UUID NOT NULL,
+      media_type TEXT NOT NULL,
+      config JSONB NOT NULL DEFAULT '{}'::jsonb,
+      region_id TEXT NOT NULL,
+      owner_account_id UUID NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL
     )
   `);
 
@@ -3176,6 +3310,110 @@ async function createPostgresPersistence(databaseUrl: string): Promise<Persisten
          ON CONFLICT (account_id) DO UPDATE SET data = EXCLUDED.data`,
         [progress.accountId, JSON.stringify(progress.data)]
       );
+    },
+    async listAllChatHistory() {
+      const result = await pool.query("SELECT id, region_id, avatar_id, display_name, message, channel, created_at FROM chat_history ORDER BY region_id ASC, seq ASC");
+      return result.rows.map((row) => ({
+        id: row.id,
+        regionId: row.region_id,
+        avatarId: row.avatar_id,
+        displayName: row.display_name,
+        message: row.message,
+        channel: row.channel,
+        createdAt: new Date(row.created_at).toISOString()
+      }));
+    },
+    async appendChatHistory(entry, maxPerRegion) {
+      await pool.query(
+        `INSERT INTO chat_history (id, region_id, avatar_id, display_name, message, channel, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)`,
+        [entry.id, entry.regionId, entry.avatarId, entry.displayName, entry.message, entry.channel, entry.createdAt]
+      );
+      // Keep only the most recent maxPerRegion rows for this region.
+      await pool.query(
+        `DELETE FROM chat_history
+         WHERE region_id = $1
+           AND seq NOT IN (
+             SELECT seq FROM chat_history
+             WHERE region_id = $1
+             ORDER BY seq DESC
+             LIMIT $2
+           )`,
+        [entry.regionId, maxPerRegion]
+      );
+    },
+    async listAllEvents() {
+      const result = await pool.query("SELECT id, name, description, creator_account_id, creator_display_name, region_id, parcel_id, event_type, start_time, end_time, recurring, rsvps, max_attendees, prizes, created_at FROM events");
+      return result.rows.map((row) => ({
+        id: row.id,
+        name: row.name,
+        description: row.description,
+        creatorAccountId: row.creator_account_id,
+        creatorDisplayName: row.creator_display_name,
+        regionId: row.region_id,
+        parcelId: row.parcel_id,
+        eventType: row.event_type,
+        startTime: new Date(row.start_time).toISOString(),
+        endTime: new Date(row.end_time).toISOString(),
+        recurring: row.recurring,
+        rsvps: row.rsvps,
+        maxAttendees: row.max_attendees,
+        prizes: row.prizes,
+        createdAt: new Date(row.created_at).toISOString()
+      }));
+    },
+    async saveEvent(event) {
+      await pool.query(
+        `INSERT INTO events (id, name, description, creator_account_id, creator_display_name, region_id, parcel_id, event_type, start_time, end_time, recurring, rsvps, max_attendees, prizes, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           description = EXCLUDED.description,
+           region_id = EXCLUDED.region_id,
+           parcel_id = EXCLUDED.parcel_id,
+           event_type = EXCLUDED.event_type,
+           start_time = EXCLUDED.start_time,
+           end_time = EXCLUDED.end_time,
+           recurring = EXCLUDED.recurring,
+           rsvps = EXCLUDED.rsvps,
+           max_attendees = EXCLUDED.max_attendees,
+           prizes = EXCLUDED.prizes`,
+        [
+          event.id, event.name, event.description, event.creatorAccountId, event.creatorDisplayName,
+          event.regionId, event.parcelId, event.eventType, event.startTime, event.endTime, event.recurring,
+          JSON.stringify(event.rsvps), event.maxAttendees, event.prizes, event.createdAt
+        ]
+      );
+    },
+    async deleteEvent(eventId) {
+      await pool.query("DELETE FROM events WHERE id = $1", [eventId]);
+    },
+    async listAllMediaItems() {
+      const result = await pool.query("SELECT object_id, id, media_type, config, region_id, owner_account_id, created_at FROM media_items");
+      return result.rows.map((row) => ({
+        id: row.id,
+        objectId: row.object_id,
+        mediaType: row.media_type,
+        config: row.config,
+        regionId: row.region_id,
+        ownerAccountId: row.owner_account_id,
+        createdAt: new Date(row.created_at).toISOString()
+      }));
+    },
+    async saveMediaItem(media) {
+      await pool.query(
+        `INSERT INTO media_items (object_id, id, media_type, config, region_id, owner_account_id, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7)
+         ON CONFLICT (object_id) DO UPDATE SET
+           media_type = EXCLUDED.media_type,
+           config = EXCLUDED.config,
+           region_id = EXCLUDED.region_id,
+           owner_account_id = EXCLUDED.owner_account_id`,
+        [media.objectId, media.id, media.mediaType, JSON.stringify(media.config), media.regionId, media.ownerAccountId, media.createdAt]
+      );
+    },
+    async deleteMediaItem(objectId) {
+      await pool.query("DELETE FROM media_items WHERE object_id = $1", [objectId]);
     },
     async listAllPets() {
       const result = await pool.query("SELECT id, owner_account_id, name, species, rarity, color, accent_color, accessory, happiness, energy, tricks, level, xp, adopted_at, last_fed_at, last_played_at FROM pets");
