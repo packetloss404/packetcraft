@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getSession } from "./store.js";
+import { persistence } from "./_shared-state.js";
+import type { PetRecord } from "../data/persistence.js";
 
 // --- Types ---
 
@@ -44,9 +46,69 @@ export type PetState = {
 
 const pets = new Map<string, Pet>();
 const petsByOwner = new Map<string, Set<string>>();
+// Live presence/session state — intentionally kept in-memory (not durable): which
+// pet is summoned, its transient position/animation, and per-region presence sets.
 const activePets = new Map<string, string>(); // accountId -> petId
 const petStates = new Map<string, PetState>(); // petId -> PetState
 const petStatesByRegion = new Map<string, Set<string>>(); // regionId -> Set<petId>
+
+// ── Persistence mapping (write-through cache) ───────────────────────────────
+
+function toPetRecord(p: Pet): PetRecord {
+  return {
+    id: p.id,
+    ownerAccountId: p.ownerAccountId,
+    name: p.name,
+    species: p.species,
+    rarity: p.rarity,
+    color: p.color,
+    accentColor: p.accentColor,
+    accessory: p.accessory,
+    happiness: p.happiness,
+    energy: p.energy,
+    tricks: [...p.tricks],
+    level: p.level,
+    xp: p.xp,
+    adoptedAt: p.adoptedAt,
+    lastFedAt: p.lastFedAt,
+    lastPlayedAt: p.lastPlayedAt
+  };
+}
+
+function fromPetRecord(r: PetRecord): Pet {
+  return {
+    id: r.id,
+    ownerAccountId: r.ownerAccountId,
+    name: r.name,
+    species: r.species as PetSpecies,
+    rarity: r.rarity as PetRarity,
+    color: r.color,
+    accentColor: r.accentColor,
+    accessory: r.accessory as PetAccessory,
+    happiness: r.happiness,
+    energy: r.energy,
+    tricks: r.tricks.map((t) => t as PetTrick),
+    level: r.level,
+    xp: r.xp,
+    adoptedAt: r.adoptedAt,
+    lastFedAt: r.lastFedAt,
+    lastPlayedAt: r.lastPlayedAt
+  };
+}
+
+function persistPet(p: Pet): void {
+  void persistence.savePet(toPetRecord(p));
+}
+
+// Hydrate cache from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so durable data survives restarts.
+export async function hydratePets(): Promise<void> {
+  for (const record of await persistence.listAllPets()) {
+    const pet = fromPetRecord(record);
+    pets.set(pet.id, pet);
+    getOwnerPets(pet.ownerAccountId).add(pet.id);
+  }
+}
 
 // --- Constants ---
 
@@ -133,6 +195,7 @@ export function adoptPet(token: string, name: string, species: PetSpecies): Pet 
 
   pets.set(pet.id, pet);
   getOwnerPets(session.accountId).add(pet.id);
+  persistPet(pet);
 
   return pet;
 }
@@ -237,6 +300,7 @@ export function feedPet(token: string, petId: string): { pet: Pet; message: stri
   pet.lastFedAt = new Date().toISOString();
 
   levelUpCheck(pet);
+  persistPet(pet);
 
   return { pet, message: `${pet.name} happily munches away!` };
 }
@@ -269,6 +333,7 @@ export function playWithPet(token: string, petId: string): { pet: Pet; message: 
   }
 
   levelUpCheck(pet);
+  persistPet(pet);
 
   const msg = learnedTrick
     ? `${pet.name} learned a new trick: ${learnedTrick}!`
@@ -285,6 +350,7 @@ export function petPet(token: string, petId: string): { pet: Pet; message: strin
   if (!pet || pet.ownerAccountId !== session.accountId) return undefined;
 
   pet.happiness = Math.min(100, pet.happiness + 3);
+  persistPet(pet);
 
   return { pet, message: `${pet.name} purrs contentedly.` };
 }
@@ -300,6 +366,7 @@ export function renamePet(token: string, petId: string, newName: string): Pet | 
   if (!trimmed) return undefined;
 
   pet.name = trimmed;
+  persistPet(pet);
   return pet;
 }
 
@@ -319,6 +386,7 @@ export function customizePet(
   if (color !== undefined) pet.color = color;
   if (accentColor !== undefined) pet.accentColor = accentColor;
   if (accessory !== undefined) pet.accessory = accessory;
+  persistPet(pet);
 
   return pet;
 }
@@ -346,6 +414,7 @@ export function performTrick(
   pet.xp += XP_PER_TRICK;
 
   levelUpCheck(pet);
+  persistPet(pet);
 
   const state = petStates.get(petId);
   if (state) {

@@ -13,6 +13,10 @@ import {
 import { hydrateMarketplace } from "./marketplace-service.js";
 import { hydrateStorefronts } from "./storefront-service.js";
 import { hydrateAchievements } from "./achievement-service.js";
+import { hydratePets } from "./pet-service.js";
+import { hydratePhotos } from "./photo-service.js";
+import { hydrateHomes } from "./home-service.js";
+import { hydrateHomeRatings } from "./home-rating-service.js";
 
 // ── Shared types & helpers (re-exported from _shared-state) ─────────────────
 export type {
@@ -183,6 +187,10 @@ export async function initializeWorldStore() {
   await hydrateMarketplace();
   await hydrateStorefronts();
   await hydrateAchievements();
+  await hydratePets();
+  await hydratePhotos();
+  await hydrateHomes();
+  await hydrateHomeRatings();
 }
 
 export function listRegions() {

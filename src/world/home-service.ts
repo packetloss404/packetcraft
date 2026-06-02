@@ -1,4 +1,6 @@
 import { getSession, listParcels, listFriends, type Session, type Parcel } from "./store.js";
+import { persistence } from "./_shared-state.js";
+import type { HomeRecord } from "../data/persistence.js";
 
 export type HomePrivacy = "public" | "friends" | "private";
 
@@ -11,9 +13,25 @@ export type HomeData = {
 
 const homes = new Map<string, HomeData>();
 
-// Doorbell cooldown: key = `${visitorAccountId}:${homeOwnerAccountId}`, value = timestamp
+// Doorbell cooldown: key = `${visitorAccountId}:${homeOwnerAccountId}`, value = timestamp.
+// Transient rate-limit state only — intentionally kept in-memory (not durable).
 const doorbellCooldowns = new Map<string, number>();
 const DOORBELL_COOLDOWN_MS = 60_000;
+
+// ── Persistence mapping (write-through cache) ───────────────────────────────
+
+function persistHome(h: HomeData): void {
+  const record: HomeRecord = { ...h };
+  void persistence.saveHome(record);
+}
+
+// Hydrate cache from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so durable data survives restarts.
+export async function hydrateHomes(): Promise<void> {
+  for (const record of await persistence.listAllHomes()) {
+    homes.set(record.accountId, { ...record });
+  }
+}
 
 export async function setHome(token: string, parcelId: string): Promise<HomeData | undefined> {
   const session = getSession(token);
@@ -34,6 +52,7 @@ export async function setHome(token: string, parcelId: string): Promise<HomeData
   };
 
   homes.set(session.accountId, home);
+  persistHome(home);
   return home;
 }
 
@@ -46,7 +65,9 @@ export function getHome(token: string): HomeData | undefined {
 export function clearHome(token: string): boolean {
   const session = getSession(token);
   if (!session) return false;
-  return homes.delete(session.accountId);
+  const deleted = homes.delete(session.accountId);
+  if (deleted) void persistence.deleteHome(session.accountId);
+  return deleted;
 }
 
 export async function teleportHome(token: string): Promise<{ parcel: Parcel; regionId: string } | undefined> {
@@ -73,6 +94,7 @@ export function setHomePrivacy(token: string, privacy: HomePrivacy): HomeData | 
 
   home.privacy = privacy;
   homes.set(session.accountId, home);
+  persistHome(home);
   return home;
 }
 

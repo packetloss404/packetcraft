@@ -26,7 +26,13 @@ import {
   type StorefrontRecord,
   type StorefrontRatingRecord,
   type CommissionRecord,
-  type PlayerProgressRecord
+  type PlayerProgressRecord,
+  type PetRecord,
+  type PhotoRecord,
+  type HomeRecord,
+  type HomeRatingRecord,
+  type HomeFavoriteRecord,
+  type HomeVisitorCountRecord
 } from "../data/persistence.js";
 import type { ChatHistoryEntry, ObjectGroupContract } from "../contracts.js";
 
@@ -57,6 +63,12 @@ export type StorefrontPersisted = StorefrontRecord;
 export type StorefrontRatingPersisted = StorefrontRatingRecord;
 export type CommissionPersisted = CommissionRecord;
 export type PlayerProgressPersisted = PlayerProgressRecord;
+export type PetPersisted = PetRecord;
+export type PhotoPersisted = PhotoRecord;
+export type HomePersisted = HomeRecord;
+export type HomeRatingPersisted = HomeRatingRecord;
+export type HomeFavoritePersisted = HomeFavoriteRecord;
+export type HomeVisitorCountPersisted = HomeVisitorCountRecord;
 
 export type BuildPermission = {
   allowed: boolean;

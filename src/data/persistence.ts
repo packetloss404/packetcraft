@@ -244,6 +244,69 @@ export type PlayerProgressRecord = {
   data: unknown;
 };
 
+export type PetRecord = {
+  id: string;
+  ownerAccountId: string;
+  name: string;
+  species: string;
+  rarity: string;
+  color: string;
+  accentColor: string;
+  accessory: string;
+  happiness: number;
+  energy: number;
+  tricks: string[];
+  level: number;
+  xp: number;
+  adoptedAt: string;
+  lastFedAt: string;
+  lastPlayedAt: string;
+};
+
+export type PhotoRecord = {
+  id: string;
+  accountId: string;
+  displayName: string;
+  regionId: string;
+  title: string;
+  description: string;
+  filter: string;
+  width: number;
+  height: number;
+  thumbnailData: string;
+  position: { x: number; y: number; z: number };
+  cameraRotation: { x: number; y: number };
+  likes: string[];
+  comments: { id: string; accountId: string; displayName: string; text: string; createdAt: string }[];
+  visibility: "public" | "friends" | "private";
+  createdAt: string;
+};
+
+export type HomeRecord = {
+  accountId: string;
+  parcelId: string;
+  privacy: "public" | "friends" | "private";
+  setAt: string;
+};
+
+export type HomeRatingRecord = {
+  parcelId: string;
+  accountId: string;
+  displayName: string;
+  rating: number;
+  createdAt: string;
+};
+
+export type HomeFavoriteRecord = {
+  accountId: string;
+  parcelId: string;
+};
+
+export type HomeVisitorCountRecord = {
+  parcelId: string;
+  visitorCount: number;
+};
+
 export type AvatarAppearanceRecord = {
   accountId: string;
   bodyColor: string;
@@ -406,6 +469,25 @@ export type PersistenceLayer = {
   // Achievements / player progress
   listAllPlayerProgress(): Promise<PlayerProgressRecord[]>;
   savePlayerProgress(progress: PlayerProgressRecord): Promise<void>;
+  // Pets
+  listAllPets(): Promise<PetRecord[]>;
+  savePet(pet: PetRecord): Promise<void>;
+  // Photos
+  listAllPhotos(): Promise<PhotoRecord[]>;
+  savePhoto(photo: PhotoRecord): Promise<void>;
+  deletePhoto(photoId: string): Promise<void>;
+  // Homes
+  listAllHomes(): Promise<HomeRecord[]>;
+  saveHome(home: HomeRecord): Promise<void>;
+  deleteHome(accountId: string): Promise<void>;
+  // Home ratings / favorites / visitor counts
+  listAllHomeRatings(): Promise<HomeRatingRecord[]>;
+  saveHomeRating(rating: HomeRatingRecord): Promise<void>;
+  listAllHomeFavorites(): Promise<HomeFavoriteRecord[]>;
+  saveHomeFavorite(favorite: HomeFavoriteRecord): Promise<void>;
+  deleteHomeFavorite(accountId: string, parcelId: string): Promise<void>;
+  listAllHomeVisitorCounts(): Promise<HomeVisitorCountRecord[]>;
+  saveHomeVisitorCount(count: HomeVisitorCountRecord): Promise<void>;
 };
 
 const seededRegions: RegionRecord[] = [
@@ -769,7 +851,15 @@ function createMemoryPersistence(): PersistenceLayer {
   const storefrontRatings = new Map<string, StorefrontRatingRecord>();
   const commissions = new Map<string, CommissionRecord>();
   const playerProgress = new Map<string, PlayerProgressRecord>();
+  const petsStore = new Map<string, PetRecord>();
+  const photosStore = new Map<string, PhotoRecord>();
+  const homesStore = new Map<string, HomeRecord>();
+  const homeRatingsStore = new Map<string, HomeRatingRecord>();
+  const homeFavoritesStore = new Map<string, HomeFavoriteRecord>();
+  const homeVisitorCountsStore = new Map<string, HomeVisitorCountRecord>();
   const ratingKey = (accountId: string, storefrontAccountId: string) => `${accountId}::${storefrontAccountId}`;
+  const homeRatingKey = (parcelId: string, accountId: string) => `${parcelId}::${accountId}`;
+  const homeFavoriteKey = (accountId: string, parcelId: string) => `${accountId}::${parcelId}`;
   return {
     mode: "memory",
     async listRegions() {
@@ -1367,6 +1457,63 @@ function createMemoryPersistence(): PersistenceLayer {
     async savePlayerProgress(progress) {
       playerProgress.set(progress.accountId, { ...progress });
     },
+    async listAllPets() {
+      return [...petsStore.values()].map((p) => ({ ...p, tricks: [...p.tricks] }));
+    },
+    async savePet(pet) {
+      petsStore.set(pet.id, { ...pet, tricks: [...pet.tricks] });
+    },
+    async listAllPhotos() {
+      return [...photosStore.values()].map((p) => ({
+        ...p,
+        likes: [...p.likes],
+        comments: p.comments.map((c) => ({ ...c })),
+        position: { ...p.position },
+        cameraRotation: { ...p.cameraRotation }
+      }));
+    },
+    async savePhoto(photo) {
+      photosStore.set(photo.id, {
+        ...photo,
+        likes: [...photo.likes],
+        comments: photo.comments.map((c) => ({ ...c })),
+        position: { ...photo.position },
+        cameraRotation: { ...photo.cameraRotation }
+      });
+    },
+    async deletePhoto(photoId) {
+      photosStore.delete(photoId);
+    },
+    async listAllHomes() {
+      return [...homesStore.values()].map((h) => ({ ...h }));
+    },
+    async saveHome(home) {
+      homesStore.set(home.accountId, { ...home });
+    },
+    async deleteHome(accountId) {
+      homesStore.delete(accountId);
+    },
+    async listAllHomeRatings() {
+      return [...homeRatingsStore.values()].map((r) => ({ ...r }));
+    },
+    async saveHomeRating(rating) {
+      homeRatingsStore.set(homeRatingKey(rating.parcelId, rating.accountId), { ...rating });
+    },
+    async listAllHomeFavorites() {
+      return [...homeFavoritesStore.values()].map((f) => ({ ...f }));
+    },
+    async saveHomeFavorite(favorite) {
+      homeFavoritesStore.set(homeFavoriteKey(favorite.accountId, favorite.parcelId), { ...favorite });
+    },
+    async deleteHomeFavorite(accountId, parcelId) {
+      homeFavoritesStore.delete(homeFavoriteKey(accountId, parcelId));
+    },
+    async listAllHomeVisitorCounts() {
+      return [...homeVisitorCountsStore.values()].map((c) => ({ ...c }));
+    },
+    async saveHomeVisitorCount(count) {
+      homeVisitorCountsStore.set(count.parcelId, { ...count });
+    },
   };
 }
 
@@ -1802,6 +1949,83 @@ async function createPostgresPersistence(databaseUrl: string): Promise<Persisten
     CREATE TABLE IF NOT EXISTS player_progress (
       account_id UUID PRIMARY KEY,
       data JSONB NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS pets (
+      id UUID PRIMARY KEY,
+      owner_account_id UUID NOT NULL,
+      name TEXT NOT NULL,
+      species TEXT NOT NULL,
+      rarity TEXT NOT NULL,
+      color TEXT NOT NULL,
+      accent_color TEXT NOT NULL,
+      accessory TEXT NOT NULL,
+      happiness INTEGER NOT NULL,
+      energy INTEGER NOT NULL,
+      tricks JSONB NOT NULL DEFAULT '[]'::jsonb,
+      level INTEGER NOT NULL,
+      xp INTEGER NOT NULL,
+      adopted_at TIMESTAMPTZ NOT NULL,
+      last_fed_at TIMESTAMPTZ NOT NULL,
+      last_played_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS photos (
+      id UUID PRIMARY KEY,
+      account_id UUID NOT NULL,
+      display_name TEXT NOT NULL,
+      region_id TEXT NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT NOT NULL DEFAULT '',
+      filter TEXT NOT NULL,
+      width INTEGER NOT NULL DEFAULT 0,
+      height INTEGER NOT NULL DEFAULT 0,
+      thumbnail_data TEXT NOT NULL,
+      position JSONB NOT NULL DEFAULT '{}'::jsonb,
+      camera_rotation JSONB NOT NULL DEFAULT '{}'::jsonb,
+      likes JSONB NOT NULL DEFAULT '[]'::jsonb,
+      comments JSONB NOT NULL DEFAULT '[]'::jsonb,
+      visibility TEXT NOT NULL DEFAULT 'public',
+      created_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS homes (
+      account_id UUID PRIMARY KEY,
+      parcel_id TEXT NOT NULL,
+      privacy TEXT NOT NULL DEFAULT 'public',
+      set_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS home_ratings (
+      parcel_id TEXT NOT NULL,
+      account_id UUID NOT NULL,
+      display_name TEXT NOT NULL,
+      rating INTEGER NOT NULL,
+      created_at TIMESTAMPTZ NOT NULL,
+      PRIMARY KEY (parcel_id, account_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS home_favorites (
+      account_id UUID NOT NULL,
+      parcel_id TEXT NOT NULL,
+      PRIMARY KEY (account_id, parcel_id)
+    )
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS home_visitor_counts (
+      parcel_id TEXT PRIMARY KEY,
+      visitor_count INTEGER NOT NULL DEFAULT 0
     )
   `);
 
@@ -2951,6 +3175,160 @@ async function createPostgresPersistence(databaseUrl: string): Promise<Persisten
         `INSERT INTO player_progress (account_id, data) VALUES ($1,$2)
          ON CONFLICT (account_id) DO UPDATE SET data = EXCLUDED.data`,
         [progress.accountId, JSON.stringify(progress.data)]
+      );
+    },
+    async listAllPets() {
+      const result = await pool.query("SELECT id, owner_account_id, name, species, rarity, color, accent_color, accessory, happiness, energy, tricks, level, xp, adopted_at, last_fed_at, last_played_at FROM pets");
+      return result.rows.map((row) => ({
+        id: row.id,
+        ownerAccountId: row.owner_account_id,
+        name: row.name,
+        species: row.species,
+        rarity: row.rarity,
+        color: row.color,
+        accentColor: row.accent_color,
+        accessory: row.accessory,
+        happiness: row.happiness,
+        energy: row.energy,
+        tricks: row.tricks,
+        level: row.level,
+        xp: row.xp,
+        adoptedAt: new Date(row.adopted_at).toISOString(),
+        lastFedAt: new Date(row.last_fed_at).toISOString(),
+        lastPlayedAt: new Date(row.last_played_at).toISOString()
+      }));
+    },
+    async savePet(pet) {
+      await pool.query(
+        `INSERT INTO pets (id, owner_account_id, name, species, rarity, color, accent_color, accessory, happiness, energy, tricks, level, xp, adopted_at, last_fed_at, last_played_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         ON CONFLICT (id) DO UPDATE SET
+           name = EXCLUDED.name,
+           rarity = EXCLUDED.rarity,
+           color = EXCLUDED.color,
+           accent_color = EXCLUDED.accent_color,
+           accessory = EXCLUDED.accessory,
+           happiness = EXCLUDED.happiness,
+           energy = EXCLUDED.energy,
+           tricks = EXCLUDED.tricks,
+           level = EXCLUDED.level,
+           xp = EXCLUDED.xp,
+           last_fed_at = EXCLUDED.last_fed_at,
+           last_played_at = EXCLUDED.last_played_at`,
+        [
+          pet.id, pet.ownerAccountId, pet.name, pet.species, pet.rarity, pet.color, pet.accentColor,
+          pet.accessory, pet.happiness, pet.energy, JSON.stringify(pet.tricks), pet.level, pet.xp,
+          pet.adoptedAt, pet.lastFedAt, pet.lastPlayedAt
+        ]
+      );
+    },
+    async listAllPhotos() {
+      const result = await pool.query("SELECT id, account_id, display_name, region_id, title, description, filter, width, height, thumbnail_data, position, camera_rotation, likes, comments, visibility, created_at FROM photos");
+      return result.rows.map((row) => ({
+        id: row.id,
+        accountId: row.account_id,
+        displayName: row.display_name,
+        regionId: row.region_id,
+        title: row.title,
+        description: row.description,
+        filter: row.filter,
+        width: row.width,
+        height: row.height,
+        thumbnailData: row.thumbnail_data,
+        position: row.position,
+        cameraRotation: row.camera_rotation,
+        likes: row.likes,
+        comments: row.comments,
+        visibility: row.visibility,
+        createdAt: new Date(row.created_at).toISOString()
+      }));
+    },
+    async savePhoto(photo) {
+      await pool.query(
+        `INSERT INTO photos (id, account_id, display_name, region_id, title, description, filter, width, height, thumbnail_data, position, camera_rotation, likes, comments, visibility, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)
+         ON CONFLICT (id) DO UPDATE SET
+           title = EXCLUDED.title,
+           description = EXCLUDED.description,
+           likes = EXCLUDED.likes,
+           comments = EXCLUDED.comments,
+           visibility = EXCLUDED.visibility`,
+        [
+          photo.id, photo.accountId, photo.displayName, photo.regionId, photo.title, photo.description,
+          photo.filter, photo.width, photo.height, photo.thumbnailData, JSON.stringify(photo.position),
+          JSON.stringify(photo.cameraRotation), JSON.stringify(photo.likes), JSON.stringify(photo.comments),
+          photo.visibility, photo.createdAt
+        ]
+      );
+    },
+    async deletePhoto(photoId) {
+      await pool.query("DELETE FROM photos WHERE id = $1", [photoId]);
+    },
+    async listAllHomes() {
+      const result = await pool.query("SELECT account_id, parcel_id, privacy, set_at FROM homes");
+      return result.rows.map((row) => ({
+        accountId: row.account_id,
+        parcelId: row.parcel_id,
+        privacy: row.privacy,
+        setAt: new Date(row.set_at).toISOString()
+      }));
+    },
+    async saveHome(home) {
+      await pool.query(
+        `INSERT INTO homes (account_id, parcel_id, privacy, set_at) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (account_id) DO UPDATE SET
+           parcel_id = EXCLUDED.parcel_id,
+           privacy = EXCLUDED.privacy,
+           set_at = EXCLUDED.set_at`,
+        [home.accountId, home.parcelId, home.privacy, home.setAt]
+      );
+    },
+    async deleteHome(accountId) {
+      await pool.query("DELETE FROM homes WHERE account_id = $1", [accountId]);
+    },
+    async listAllHomeRatings() {
+      const result = await pool.query("SELECT parcel_id, account_id, display_name, rating, created_at FROM home_ratings");
+      return result.rows.map((row) => ({
+        parcelId: row.parcel_id,
+        accountId: row.account_id,
+        displayName: row.display_name,
+        rating: row.rating,
+        createdAt: new Date(row.created_at).toISOString()
+      }));
+    },
+    async saveHomeRating(rating) {
+      await pool.query(
+        `INSERT INTO home_ratings (parcel_id, account_id, display_name, rating, created_at) VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (parcel_id, account_id) DO UPDATE SET
+           display_name = EXCLUDED.display_name,
+           rating = EXCLUDED.rating,
+           created_at = EXCLUDED.created_at`,
+        [rating.parcelId, rating.accountId, rating.displayName, rating.rating, rating.createdAt]
+      );
+    },
+    async listAllHomeFavorites() {
+      const result = await pool.query("SELECT account_id, parcel_id FROM home_favorites");
+      return result.rows.map((row) => ({ accountId: row.account_id, parcelId: row.parcel_id }));
+    },
+    async saveHomeFavorite(favorite) {
+      await pool.query(
+        `INSERT INTO home_favorites (account_id, parcel_id) VALUES ($1,$2)
+         ON CONFLICT (account_id, parcel_id) DO NOTHING`,
+        [favorite.accountId, favorite.parcelId]
+      );
+    },
+    async deleteHomeFavorite(accountId, parcelId) {
+      await pool.query("DELETE FROM home_favorites WHERE account_id = $1 AND parcel_id = $2", [accountId, parcelId]);
+    },
+    async listAllHomeVisitorCounts() {
+      const result = await pool.query("SELECT parcel_id, visitor_count FROM home_visitor_counts");
+      return result.rows.map((row) => ({ parcelId: row.parcel_id, visitorCount: row.visitor_count }));
+    },
+    async saveHomeVisitorCount(count) {
+      await pool.query(
+        `INSERT INTO home_visitor_counts (parcel_id, visitor_count) VALUES ($1,$2)
+         ON CONFLICT (parcel_id) DO UPDATE SET visitor_count = EXCLUDED.visitor_count`,
+        [count.parcelId, count.visitorCount]
       );
     },
   };

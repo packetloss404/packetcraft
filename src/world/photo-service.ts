@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { getSession } from "./store.js";
+import { persistence } from "./_shared-state.js";
+import type { PhotoRecord } from "../data/persistence.js";
 
 // --- Types ---
 
@@ -46,6 +48,62 @@ const photos = new Map<string, Photo>();
 
 const MAX_THUMBNAIL_BYTES = 50 * 1024;
 
+// ── Persistence mapping (write-through cache) ───────────────────────────────
+
+function toPhotoRecord(p: Photo): PhotoRecord {
+  return {
+    id: p.id,
+    accountId: p.accountId,
+    displayName: p.displayName,
+    regionId: p.regionId,
+    title: p.title,
+    description: p.description,
+    filter: p.filter,
+    width: p.width,
+    height: p.height,
+    thumbnailData: p.thumbnailData,
+    position: { ...p.position },
+    cameraRotation: { ...p.cameraRotation },
+    likes: [...p.likes],
+    comments: p.comments.map((c) => ({ ...c })),
+    visibility: p.visibility,
+    createdAt: p.createdAt
+  };
+}
+
+function fromPhotoRecord(r: PhotoRecord): Photo {
+  return {
+    id: r.id,
+    accountId: r.accountId,
+    displayName: r.displayName,
+    regionId: r.regionId,
+    title: r.title,
+    description: r.description,
+    filter: r.filter as PhotoFilter,
+    width: r.width,
+    height: r.height,
+    thumbnailData: r.thumbnailData,
+    position: { ...r.position },
+    cameraRotation: { ...r.cameraRotation },
+    likes: [...r.likes],
+    comments: r.comments.map((c) => ({ ...c })),
+    visibility: r.visibility,
+    createdAt: r.createdAt
+  };
+}
+
+function persistPhoto(p: Photo): void {
+  void persistence.savePhoto(toPhotoRecord(p));
+}
+
+// Hydrate cache from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so durable data survives restarts.
+export async function hydratePhotos(): Promise<void> {
+  for (const record of await persistence.listAllPhotos()) {
+    photos.set(record.id, fromPhotoRecord(record));
+  }
+}
+
 // --- Service functions ---
 
 export function takePhoto(
@@ -84,6 +142,7 @@ export function takePhoto(
   };
 
   photos.set(photo.id, photo);
+  persistPhoto(photo);
   return photo;
 }
 
@@ -131,6 +190,7 @@ export function deletePhoto(token: string, photoId: string): boolean {
   }
 
   photos.delete(photoId);
+  void persistence.deletePhoto(photoId);
   return true;
 }
 
@@ -152,6 +212,7 @@ export function likePhoto(
     photo.likes.push(session.accountId);
   }
 
+  persistPhoto(photo);
   return photo;
 }
 
@@ -175,6 +236,7 @@ export function commentOnPhoto(
   };
 
   photo.comments.push(comment);
+  persistPhoto(photo);
   return photo;
 }
 

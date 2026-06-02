@@ -1,5 +1,6 @@
 import { getSession, listParcels, listRegions, getRegionPopulation } from "./store.js";
 import type { Session } from "./store.js";
+import { persistence } from "./_shared-state.js";
 
 export type HomeRating = {
   accountId: string;
@@ -33,6 +34,47 @@ const favoritesByAccount = new Map<string, Set<string>>();
 // parcelId -> visitor count
 const visitorCountByParcel = new Map<string, number>();
 
+// ── Persistence mapping (write-through cache) ───────────────────────────────
+
+function persistRating(parcelId: string, r: HomeRating): void {
+  void persistence.saveHomeRating({
+    parcelId,
+    accountId: r.accountId,
+    displayName: r.displayName,
+    rating: r.rating,
+    createdAt: r.createdAt
+  });
+}
+
+// Hydrate caches from persistence. Called by initializeWorldStore() AFTER the
+// canonical persistence layer is set, so durable data survives restarts.
+export async function hydrateHomeRatings(): Promise<void> {
+  for (const record of await persistence.listAllHomeRatings()) {
+    let ratings = ratingsByParcel.get(record.parcelId);
+    if (!ratings) {
+      ratings = [];
+      ratingsByParcel.set(record.parcelId, ratings);
+    }
+    ratings.push({
+      accountId: record.accountId,
+      displayName: record.displayName,
+      rating: record.rating,
+      createdAt: record.createdAt
+    });
+  }
+  for (const record of await persistence.listAllHomeFavorites()) {
+    let favorites = favoritesByAccount.get(record.accountId);
+    if (!favorites) {
+      favorites = new Set<string>();
+      favoritesByAccount.set(record.accountId, favorites);
+    }
+    favorites.add(record.parcelId);
+  }
+  for (const record of await persistence.listAllHomeVisitorCounts()) {
+    visitorCountByParcel.set(record.parcelId, record.visitorCount);
+  }
+}
+
 export function rateHome(
   token: string,
   parcelId: string,
@@ -53,13 +95,16 @@ export function rateHome(
   if (existing) {
     existing.rating = clampedRating;
     existing.createdAt = new Date().toISOString();
+    persistRating(parcelId, existing);
   } else {
-    ratings.push({
+    const rating: HomeRating = {
       accountId: session.accountId,
       displayName: session.displayName,
       rating: clampedRating,
       createdAt: new Date().toISOString(),
-    });
+    };
+    ratings.push(rating);
+    persistRating(parcelId, rating);
   }
 
   return getHomeRatings(parcelId);
@@ -80,10 +125,12 @@ export function favoriteHome(
 
   if (favorites.has(parcelId)) {
     favorites.delete(parcelId);
+    void persistence.deleteHomeFavorite(session.accountId, parcelId);
     return { favorited: false };
   }
 
   favorites.add(parcelId);
+  void persistence.saveHomeFavorite({ accountId: session.accountId, parcelId });
   return { favorited: true };
 }
 
@@ -108,7 +155,9 @@ export function getHomeVisitorCount(parcelId: string): number {
 
 export function incrementVisitorCount(parcelId: string): void {
   const current = visitorCountByParcel.get(parcelId) ?? 0;
-  visitorCountByParcel.set(parcelId, current + 1);
+  const next = current + 1;
+  visitorCountByParcel.set(parcelId, next);
+  void persistence.saveHomeVisitorCount({ parcelId, visitorCount: next });
 }
 
 export function getFavoriteHomes(token: string): string[] {
